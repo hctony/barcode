@@ -6,7 +6,7 @@ from openpyxl.styles import Alignment, Border, Side
 import os
 import math
 
-def generate_datamatrix(code, output_dir='barcodes'):
+def generate_datamatrix(code, output_dir='barcodes', add_t=False):
     """Data Matrix 코드 이미지를 생성하는 함수"""
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -17,8 +17,8 @@ def generate_datamatrix(code, output_dir='barcodes'):
     # PIL Image로 변환
     img = PILImage.frombytes('RGB', (encoded.width, encoded.height), encoded.pixels)
     
-    # 이미지 크기 조정 (1cm = 38픽셀 @ 96 DPI)
-    new_size = (38, 38)
+    # 이미지 크기 조정 (1.2cm = 45픽셀 @ 96 DPI)
+    new_size = (45, 45)
     img = img.resize(new_size, PILImage.Resampling.NEAREST)
     
     # 여백 추가
@@ -42,55 +42,74 @@ def generate_datamatrix(code, output_dir='barcodes'):
         outline='black',
         width=1
     )
-    
-    # 파일 저장 (96 DPI 설정으로 1cm 크기 유지)
-    filename = os.path.join(output_dir, f"datamatrix_{code}.png")
+
+    # 'T' 글자 추가
+    if add_t:
+        try:
+            font = ImageFont.truetype("arial.ttf", 12)
+        except IOError:
+            font = ImageFont.load_default()
+        draw.text((total_width - 10, 2), "T", fill="black", font=font)
+
+    # 파일 저장 (96 DPI 설정으로 1.2cm 크기 유지)
+    filename_suffix = "_t" if add_t else ""
+    filename = os.path.join(output_dir, f"datamatrix_{code}{filename_suffix}.png")
     img_with_border.save(filename, dpi=(96, 96))
     return filename
 
 def create_sheet_with_codes(ws, start_code, end_code):
     """한 시트에 바코드 배치"""
     # 라벨 규격 (cm)
-    printable_width = 10.40  # 실제 인쇄 가능 너비 (오른쪽 1cm 제외)
+    printable_width = 20.0  # A4 너비 기준, 여유있게 설정
     
     # 바코드 크기와 간격 (cm)
-    barcode_size = 1.00  # 1cm x 1cm
-    horizontal_spacing = 0.8  # 바코드 간 가로 간격
+    barcode_size = 1.2  # 1.2cm x 1.2cm
+    horizontal_spacing = 0.5  # 바코드 간 가로 간격
     
-    # 한 행에 들어갈 수 있는 바코드 수 계산
-    barcodes_per_row = math.floor(printable_width / (barcode_size + horizontal_spacing))
-    
+    # 한 행에 들어갈 원본 바코드 수 계산 (원본 + T-복사본 세트)
+    barcodes_per_row_single = math.floor(printable_width / (barcode_size * 2 + horizontal_spacing * 2))
+    total_columns = barcodes_per_row_single * 2
+
     # 엑셀 셀 크기 조정
-    for col in range(barcodes_per_row):
+    for col in range(total_columns):
         col_letter = chr(ord('A') + col)
-        ws.column_dimensions[col_letter].width = 5  # 약 1.3cm (간격 포함)
-    
+        ws.column_dimensions[col_letter].width = 6.5
+
     # 바코드 생성 및 배치
     current_code = start_code
     row_idx = 1
     
     while current_code <= end_code:
-        for col in range(barcodes_per_row):
+        # 한 행에 바코드 배치
+        for i in range(barcodes_per_row_single):
             if current_code > end_code:
                 break
-                
-            # 바코드 생성
-            image_path = generate_datamatrix(current_code)
             
-            # 이미지 삽입
-            img = Image(image_path)
-            img.width = 38  # 1cm
-            img.height = 38  # 1cm (텍스트 제거로 높이 감소)
+            # 원본 바코드 생성
+            image_path_orig = generate_datamatrix(current_code, add_t=False)
+            img_orig = Image(image_path_orig)
+            img_orig.width = 45
+            img_orig.height = 45
             
-            
+            # T-복사본 바코드 생성
+            image_path_t = generate_datamatrix(current_code, add_t=True)
+            img_t = Image(image_path_t)
+            img_t.width = 45
+            img_t.height = 45
+
             # 엑셀에 이미지 추가
-            cell = f"{chr(ord('A') + col)}{row_idx}"
-            ws.add_image(img, cell)
+            # 원본 (왼쪽)
+            cell_orig = f"{chr(ord('A') + i)}{row_idx}"
+            ws.add_image(img_orig, cell_orig)
             
+            # T-복사본 (오른쪽 대칭 위치)
+            cell_t = f"{chr(ord('A') + total_columns - 1 - i)}{row_idx}"
+            ws.add_image(img_t, cell_t)
+
             current_code += 1
-        
+
         # 행 높이 설정
-        ws.row_dimensions[row_idx].height = 38  # 1cm
+        ws.row_dimensions[row_idx].height = 48  # 1.2cm 보다 약간 크게
         row_idx += 1
 
 def create_label_sheets(start_code, num_codes, codes_per_sheet=100, output_file='barcodes.xlsx'):
